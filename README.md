@@ -1,2 +1,2 @@
-# Stavanet-Cfn
+# Stavatech-Cfn
 Cloudformation template library
