@@ -1,0 +1,157 @@
+# Requires https://github.com/Stavatech/cfn-certificate-provider to be pre-installed on the account
+# Usage:
+# export STACKNAME=stavanet-website
+# export DOMAINNAME=www.stavanet.com
+# export PRICECLASS=PriceClass_100
+# export HOSTEDZONEID=Z3A5MIJZ8EBWQP
+# aws cloudformation create-stack \
+#   --stack-name $STACKNAME \
+#   --template-body file://ssl_cloudfront_website.template.yml 
+#   --parameters \
+#       ParameterKey=DomainName,ParameterValue=$DOMAINNAME \
+#       ParameterKey=PriceClass,ParameterValue=$PRICECLASS \
+#       ParameterKey=HostedZoneId,ParameterValue=$HOSTEDZONEID
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  DomainName:
+    Type: String
+    Description: The website domain name.
+  
+  HostedZoneId:
+    Type: String
+    Description: Hosted zone containing the domain
+
+  PriceClass:
+    Type: String
+    Description: The CloudFront distribution price class
+    Default: 'PriceClass_All'
+    AllowedValues:
+      - 'PriceClass_100'
+      - 'PriceClass_200'
+      - 'PriceClass_All'
+
+Resources:
+  Certificate:
+    Type: Custom::Certificate 
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      SubjectAlternativeNames: 
+      - !Sub 'www.${DomainName}'
+      ServiceToken: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:binxio-cfn-certificate-provider'
+    
+  RootCertificateDNSRecord:
+    Type: Custom::CertificateDNSRecord
+    Properties:
+      CertificateArn: !Ref Certificate
+      DomainName: !Ref DomainName
+      ServiceToken: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:binxio-cfn-certificate-provider'
+
+  RootDomainValidationRecord:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+        - Name: !Sub '${RootCertificateDNSRecord.Name}'
+          Type: !Sub '${RootCertificateDNSRecord.Type}'
+          TTL: '60'
+          Weight: 1
+          SetIdentifier: !Ref 'DomainName'
+          ResourceRecords:
+            - !Sub '${RootCertificateDNSRecord.Value}'
+    
+  WwwCertificateDNSRecord:
+    Type: Custom::CertificateDNSRecord
+    Properties:
+      CertificateArn: !Ref Certificate
+      DomainName: !Sub 'www.${DomainName}'
+      ServiceToken: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:binxio-cfn-certificate-provider'
+
+  WwwDomainValidationRecord:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+        - Name: !Sub '${WwwCertificateDNSRecord.Name}'
+          Type: !Sub '${WwwCertificateDNSRecord.Type}'
+          TTL: '60'
+          Weight: 1
+          SetIdentifier: !Ref 'DomainName'
+          ResourceRecords:
+            - !Sub '${WwwCertificateDNSRecord.Value}'
+  
+  IssuedCertificate:
+    Type: Custom::IssuedCertificate
+    Properties:
+      CertificateArn: !Ref Certificate
+      ServiceToken: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:binxio-cfn-certificate-provider'
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Aliases:
+          - !Ref DomainName
+          - !Sub 'www.${DomainName}'
+        DefaultCacheBehavior:
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+          TargetOriginId: website-s3-bucket
+          ViewerProtocolPolicy: redirect-to-https
+        DefaultRootObject: index.html
+        CustomErrorResponses:
+          - ErrorCachingMinTTL: 300
+            ErrorCode: 403
+            ResponseCode: 404
+            ResponsePagePath: /404.html
+        Enabled: true
+        HttpVersion: http2
+        Origins:
+          - DomainName:
+              !Join [ "", [ !Ref WebsiteBucket, ".s3.amazonaws.com" ] ]
+            Id: website-s3-bucket
+            S3OriginConfig:
+              OriginAccessIdentity:
+                !Join [ "", [ "origin-access-identity/cloudfront/", !Ref CloudFrontOriginAccessIdentity ] ]
+        PriceClass: !Ref PriceClass
+        ViewerCertificate:
+          AcmCertificateArn: !Ref IssuedCertificate
+          MinimumProtocolVersion: TLSv1.2_2018
+          SslSupportMethod: sni-only
+      Tags:
+        - Key: Domain
+          Value: !Ref DomainName
+
+  CloudFrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub 'CloudFront OAI for ${DomainName}'
+
+  WebsiteBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Retain
+      Properties:
+        BucketEncryption:
+          ServerSideEncryptionConfiguration: 
+            -
+              ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        Tags:
+          - Key: Domain
+            Value: !Ref DomainName
+  
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Statement:
+          -
+            Action:
+              - s3:GetObject
+            Effect: Allow
+            Resource: !Join [ "", [ "arn:aws:s3:::", !Ref WebsiteBucket, "/*" ] ]
+            Principal:
+              CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
