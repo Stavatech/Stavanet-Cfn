@@ -1,20 +1,22 @@
 # Usage:
+# export STACK_NAME=bgf-website-pipeline
 # export PROJECT_NAME=bgf-website
 # export PROJECT_SOURCE=https://github.com/davidbrownza/BGF-UI/tree/master
 # export GITHUB_OWNER=davidbrownza
 # export GITHUB_REPO=BGF-UI
-# export GITHUB_TOKEN=
-# export WEBSITE_BUCKET=stavanet-website-websitebucket-v8dlaiji41nm
+# export GITHUB_TOKEN=8b16b51ec8c49237df4071e88bc1d0a288cf835a
+# export WEBSITE_BUCKET=bgf-website-websitebucket-1twnrsxvy1z0i
 # aws cloudformation create-stack \
-#   --stack-name $STACKNAME \
-#   --template-body file://ssl_cloudfront_website.template.yml 
+#   --stack-name $STACK_NAME \
+#   --template-body file://code_pipeline.template.yml \
+#   --capabilities CAPABILITY_IAM \
 #   --parameters \
 #       ParameterKey=ProjectName,ParameterValue=$PROJECT_NAME \
 #       ParameterKey=ProjectSource,ParameterValue=$PROJECT_SOURCE \
 #       ParameterKey=GithubOwner,ParameterValue=$GITHUB_OWNER \
 #       ParameterKey=GithubRepo,ParameterValue=$GITHUB_REPO \
 #       ParameterKey=GithubOAuthToken,ParameterValue=$GITHUB_TOKEN \
-#       ParameterKey=WebsiteBucket,ParameterValue=$WEBSITE_BUCKET
+#       ParameterKey=WebsiteBucket,ParameterValue=$WEBSITE_BUCKET 
 AWSTemplateFormatVersion: '2010-09-09'
 Parameters:
   ProjectName:
@@ -56,6 +58,11 @@ Resources:
         ComputeType: BUILD_GENERAL1_SMALL
         Type: LINUX_CONTAINER
         Image: "aws/codebuild/nodejs:8.11.0"
+        EnvironmentVariables:
+          - 
+            Name: 'DeployBucket'
+            Type: PLAINTEXT
+            Value: !Ref WebsiteBucket
       Source:
         Type: CODEPIPELINE
   
@@ -97,8 +104,8 @@ Resources:
                   - "s3:PutObject"
                   - "s3:PutObjectAcl"
                 Resource: 
-                  - !Join [ "", [ "arn:aws:s3:::", !Ref DeployBucket ] ]
-                  - !Join [ "", [ "arn:aws:s3:::", !Ref DeployBucket, "/*" ] ]
+                  - !Join [ "", [ "arn:aws:s3:::", !Ref WebsiteBucket ] ]
+                  - !Join [ "", [ "arn:aws:s3:::", !Ref WebsiteBucket, "/*" ] ]
               -
                 Effect: Allow
                 Action:
@@ -136,7 +143,7 @@ Resources:
                 Branch: master
                 OAuthToken: !Ref GithubOAuthToken
         - 
-          Name: Build
+          Name: Staging
           Actions: 
             - 
               Name: BuildAction
@@ -188,6 +195,7 @@ Resources:
                   - "codebuild:BatchGetBuilds"
                   - "codebuild:StartBuild"
                 Resource: "*"
+  
   # Temp bucket for storing build artifacts
   PipelineBucket: 
     Type: 'AWS::S3::Bucket'
