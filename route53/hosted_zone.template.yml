@@ -1,4 +1,11 @@
 # Credit to sjevs (https://github.com/sjevs/cloudformation-s3-static-website-with-cloudfront-and-route-53/blob/master/route53-zone.yaml)
+# Usage:
+# export STACK_NAME=<stack_name>
+# export DOMAIN_NAME=<domain_without_www>
+# aws cloudformation create-stack \
+#   --stack-name $STACK_NAME \
+#   --template-body file://hosted_zone.template.yml \
+#   --parameters ParameterKey=DomainName,ParameterValue=$DOMAIN_NAME
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Creates an Amazon Route 53 hosted zone
 Parameters:
