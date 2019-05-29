@@ -1,11 +1,12 @@
 # Usage:
-# export STACK_NAME=bgf-website-pipeline
-# export PROJECT_NAME=bgf-website
-# export PROJECT_SOURCE=https://github.com/davidbrownza/BGF-UI/tree/master
-# export GITHUB_OWNER=davidbrownza
-# export GITHUB_REPO=BGF-UI
-# export GITHUB_TOKEN=8b16b51ec8c49237df4071e88bc1d0a288cf835a
-# export WEBSITE_BUCKET=bgf-website-websitebucket-1twnrsxvy1z0i
+# export STACK_NAME=<stack_name>
+# export PROJECT_NAME=<project_name>
+# export PROJECT_SOURCE=<github_repo_URL>
+# export GITHUB_OWNER=<repo_owner>
+# export GITHUB_REPO=<repo_name>
+# export GITHUB_TOKEN=<personal_token>
+# export WEBSITE_BUCKET=<s3_bucket_name>
+# export DISTRIBUTION_ID=<cloudfront_distribution_id>
 # aws cloudformation create-stack \
 #   --stack-name $STACK_NAME \
 #   --template-body file://code_pipeline.template.yml \
@@ -16,7 +17,8 @@
 #       ParameterKey=GithubOwner,ParameterValue=$GITHUB_OWNER \
 #       ParameterKey=GithubRepo,ParameterValue=$GITHUB_REPO \
 #       ParameterKey=GithubOAuthToken,ParameterValue=$GITHUB_TOKEN \
-#       ParameterKey=WebsiteBucket,ParameterValue=$WEBSITE_BUCKET 
+#       ParameterKey=WebsiteBucket,ParameterValue=$WEBSITE_BUCKET \
+#       ParameterKey=DistributionId,ParameterValue=$DISTRIBUTION_ID 
 AWSTemplateFormatVersion: '2010-09-09'
 Parameters:
   ProjectName:
@@ -42,6 +44,10 @@ Parameters:
   WebsiteBucket:
     Type: String
     Description: "Name of bucket that website should be deployed to"
+  
+  DistributionId:
+    Type: String
+    Description: "The CloudFront distribution Id fronting the S3 bucket"
 
 Resources:
   CodeBuild:
@@ -63,6 +69,10 @@ Resources:
             Name: 'DeployBucket'
             Type: PLAINTEXT
             Value: !Ref WebsiteBucket
+          - 
+            Name: 'DistributionId'
+            Type: PLAINTEXT
+            Value: !Ref DistributionId
       Source:
         Type: CODEPIPELINE
   
