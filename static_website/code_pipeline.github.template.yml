@@ -13,7 +13,6 @@
 #   --capabilities CAPABILITY_IAM \
 #   --parameters \
 #       ParameterKey=ProjectName,ParameterValue=$PROJECT_NAME \
-#       ParameterKey=ProjectSource,ParameterValue=$PROJECT_SOURCE \
 #       ParameterKey=GithubOwner,ParameterValue=$GITHUB_OWNER \
 #       ParameterKey=GithubRepo,ParameterValue=$GITHUB_REPO \
 #       ParameterKey=GithubOAuthToken,ParameterValue=$GITHUB_TOKEN \
@@ -24,10 +23,6 @@ Parameters:
   ProjectName:
     Type: String
     Description: Project name
-  
-  ProjectSource: 
-    Type: String
-    Description: "Source control URL (e.g. Github)"
   
   GithubOwner:
     Type: String
