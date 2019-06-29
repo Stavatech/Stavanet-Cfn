@@ -27,8 +27,7 @@
 #       ParameterKey=ContainerMemory,ParameterValue=$MEMORY \
 #       ParameterKey=DesiredCount,ParameterValue=$NUM_INSTANCES \
 #       ParameterKey=Path,ParameterValue=$LB_PATH \
-#       ParameterKey=Priority,ParameterValue=$PRIORITY \
-#       ParameterKey=Role,ParameterValue=$ROLE
+#       ParameterKey=Priority,ParameterValue=$PRIORITY 
 AWSTemplateFormatVersion: '2010-09-09'
 Parameters:  
   ClusterStackName:
@@ -86,15 +85,6 @@ Parameters:
     Type: Number
     Default: 2
     Description: How many copies of the service task to run
-  
-  Role:
-    Type: String
-    Default: ""
-    Description: (Optional) An IAM role to give the service's containers if the code within needs to
-                 access other AWS resources like S3 buckets, DynamoDB tables, etc
-
-Conditions:
-  HasCustomRole: !Not [ !Equals [!Ref 'Role', ''] ]
 
 Resources:
 
@@ -159,11 +149,6 @@ Resources:
       ExecutionRoleArn:
         Fn::ImportValue:
           !Join [':', [!Ref 'ClusterStackName', 'ECSTaskExecutionRole']]
-      TaskRoleArn:
-        Fn::If:
-          - 'HasCustomRole'
-          - !Ref 'Role'
-          - !Ref "AWS::NoValue"
       ContainerDefinitions:
         - Name: !Ref 'ServiceName'
           Cpu: !Ref 'ContainerCpu'
