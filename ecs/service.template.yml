@@ -1,0 +1,294 @@
+# Usage:
+# export STACK_NAME=<stack name>
+# export CLUSTER_STACK=<cluster stack>
+# export ECS_SERVICE_NAME=<ES service name>
+# export ECR_REPOSITORY=<repo>
+# export DOMAIN_NAME=<domain name>
+# export HOSTED_ZONE_ID=<hosted zone ID>
+# export PORT=8000
+# export NUM_CPUS=256
+# export MEMORY=1024
+# export NUM_INSTANCES=2
+# export LB_PATH=*
+# export PRIORITY=1
+# export ROLE=
+# aws cloudformation create-stack \
+#   --stack-name $STACK_NAME \
+#   --template-body file://service.template.yml \
+#   --capabilities CAPABILITY_IAM \
+#   --parameters \
+#       ParameterKey=ClusterStackName,ParameterValue=$CLUSTER_STACK \
+#       ParameterKey=ServiceName,ParameterValue=$ECS_SERVICE_NAME \
+#       ParameterKey=Repository,ParameterValue=$ECR_REPOSITORY \
+#       ParameterKey=DomainName,ParameterValue=$DOMAIN_NAME \
+#       ParameterKey=HostedZoneId,ParameterValue=$HOSTED_ZONE_ID \
+#       ParameterKey=ContainerPort,ParameterValue=$PORT \
+#       ParameterKey=ContainerCpu,ParameterValue=$NUM_CPUS \
+#       ParameterKey=ContainerMemory,ParameterValue=$MEMORY \
+#       ParameterKey=DesiredCount,ParameterValue=$NUM_INSTANCES \
+#       ParameterKey=Path,ParameterValue=$LB_PATH \
+#       ParameterKey=Priority,ParameterValue=$PRIORITY \
+#       ParameterKey=Role,ParameterValue=$ROLE
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:  
+  ClusterStackName:
+    Type: String
+    Default: 'bgf-ecs-infra'
+
+  ServiceName:
+    Type: String
+    Default: 'bgf-service'
+
+  Repository:
+    Type: String
+    Default: 'bgf-e-repos-1sqxzuken832m'
+
+  DomainName:
+    Type: String
+    Description: The API domain name.
+    Default: 'api.browngroup.fund'
+  
+  HostedZoneId:
+    Type: String
+    Description: Hosted zone containing the domain
+    Default: 'Z1MCDA3TRM5B2U'
+  
+  ContainerPort:
+    Type: Number
+    Default: 8000
+    Description: What port number the application inside the docker container is binding to
+
+  ContainerCpu:
+    Type: Number
+    Default: 256
+    Description: How much CPU to give the container. 1024 is 1 CPU
+  
+  ContainerMemory:
+    Type: Number
+    Default: 512
+    Description: How much memory in megabytes to give the container
+  
+  Path:
+    Type: String
+    Default: "*"
+    Description: A path on the public load balancer that this service
+                 should be connected to. Use * to send all load balancer
+                 traffic to this service.
+  
+  Priority:
+    Type: Number
+    Default: 1
+    Description: The priority for the routing rule added to the load balancer.
+                 This only applies if your have multiple services which have been
+                 assigned to different paths on the load balancer.
+  
+  DesiredCount:
+    Type: Number
+    Default: 2
+    Description: How many copies of the service task to run
+  
+  Role:
+    Type: String
+    Default: ""
+    Description: (Optional) An IAM role to give the service's containers if the code within needs to
+                 access other AWS resources like S3 buckets, DynamoDB tables, etc
+
+Conditions:
+  HasCustomRole: !Not [ !Equals [!Ref 'Role', ''] ]
+
+Resources:
+
+  # Set up domain and certificate
+  Certificate:
+    Type: Custom::Certificate 
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      ServiceToken: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:binxio-cfn-certificate-provider'
+  
+  CertificateDNSRecord:
+    Type: Custom::CertificateDNSRecord
+    Properties:
+      CertificateArn: !Ref Certificate
+      DomainName: !Ref DomainName
+      ServiceToken: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:binxio-cfn-certificate-provider'
+
+  DomainValidationRecord:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+        - Name: !Sub '${CertificateDNSRecord.Name}'
+          Type: !Sub '${CertificateDNSRecord.Type}'
+          TTL: '60'
+          Weight: 1
+          SetIdentifier: !Ref 'DomainName'
+          ResourceRecords:
+            - !Sub '${CertificateDNSRecord.Value}'  
+
+  IssuedCertificate:
+    Type: Custom::IssuedCertificate
+    Properties:
+      CertificateArn: !Ref Certificate
+      ServiceToken: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:binxio-cfn-certificate-provider'
+  
+  DomainRecord:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+      - Name: !Ref DomainName
+        Type: A
+        AliasTarget:
+          HostedZoneId: Z35SXDOTRQ7X7K
+          DNSName: 
+            Fn::ImportValue:
+              !Join [':', [!Ref 'ClusterStackName', 'PublicLoadBalancerDNSName']]
+  
+  # The task definition. This is a simple metadata description of what
+  # container to run, and what resource requirements it has.
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref 'ServiceName'
+      Cpu: !Ref 'ContainerCpu'
+      Memory: !Ref 'ContainerMemory'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ClusterStackName', 'ECSTaskExecutionRole']]
+      TaskRoleArn:
+        Fn::If:
+          - 'HasCustomRole'
+          - !Ref 'Role'
+          - !Ref "AWS::NoValue"
+      ContainerDefinitions:
+        - Name: !Ref 'ServiceName'
+          Cpu: !Ref 'ContainerCpu'
+          Memory: !Ref 'ContainerMemory'
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${Repository}:latest
+          PortMappings:
+            - ContainerPort: !Ref 'ContainerPort'
+  
+  # The service. The service is a resource which allows you to run multiple
+  # copies of a type of task, and gather up their logs and metrics, as well
+  # as monitor the number of running tasks and replace any that have crashed
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: LoadBalancerRule
+    Properties:
+      ServiceName: !Ref 'ServiceName'
+      Cluster:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ClusterStackName', 'ClusterName']]
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 75
+      DesiredCount: !Ref 'DesiredCount'
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - Fn::ImportValue:
+                !Join [':', [!Ref 'ClusterStackName', 'FargateContainerSecurityGroup']]
+          Subnets:
+            - Fn::ImportValue:
+                !Join [':', [!Ref 'ClusterStackName', 'PublicSubnetOne']]
+            - Fn::ImportValue:
+                !Join [':', [!Ref 'ClusterStackName', 'PublicSubnetTwo']]
+      TaskDefinition: !Ref 'TaskDefinition'
+      LoadBalancers:
+        - ContainerName: !Ref 'ServiceName'
+          ContainerPort: !Ref 'ContainerPort'
+          TargetGroupArn: !Ref 'TargetGroup'
+  
+  # A target group. This is used for keeping track of all the tasks, and
+  # what IP addresses / port numbers they have. You can query it yourself,
+  # to use the addresses yourself, but most often this target group is just
+  # connected to an application load balancer, or network load balancer, so
+  # it can automatically distribute traffic across all the targets.
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 6
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      TargetType: ip
+      Name: !Ref 'ServiceName'
+      Port: !Ref 'ContainerPort'
+      Protocol: HTTP
+      UnhealthyThresholdCount: 2
+      VpcId:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ClusterStackName', 'VPCId']]
+  
+  UnsecuredLoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:        
+        - Type: redirect 
+          RedirectConfig:
+            Protocol: HTTPS
+            StatusCode: HTTP_301
+            Port: 443
+      LoadBalancerArn: 
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ClusterStackName', 'PublicLoadBalancer']]
+      Port: 80
+      Protocol: HTTP
+  
+  SecuredLoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates: 
+        - CertificateArn: !Ref IssuedCertificate
+      DefaultActions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: 'forward'
+      LoadBalancerArn: 
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ClusterStackName', 'PublicLoadBalancer']]
+      Port: 443
+      Protocol: HTTPS
+  
+  # Create a rule on the load balancer for routing traffic to the target group
+  LoadBalancerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: 'forward'
+      Conditions:
+        - Field: path-pattern
+          Values: [!Ref 'Path']
+      ListenerArn: !Ref SecuredLoadBalancerListener
+      Priority: !Ref Priority
+
+Outputs:
+  RepositoryUri:
+    Description: The name of the ECS repository
+    Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${Repository}
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'RepositoryUri' ] ]
+  RepositoryArn:
+    Description: The name of the ECS repository
+    Value: !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${Repository}
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'RepositoryArn' ] ]
+  ClusterName:
+    Description: The name of the ECS service
+    Value: 
+      Fn::ImportValue:
+        !Join [':', [!Ref 'ClusterStackName', 'ClusterName']]
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ClusterName' ] ]
+  ServiceName:
+    Description: The name of the ECS service
+    Value: !Ref 'ServiceName'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ServiceName' ] ]
